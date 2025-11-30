@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h1>Hand Tracking → Python</h1>
+<video id="video" autoplay style="width:400px; border:2px solid black;"></video>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<script type="module">
+import {
+  Camera
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js";
+import {
+  Hands
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js";
+import {
+  drawConnectors,
+  drawLandmarks
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js";
+
+// -------------------------
+// WebSocket → Python
+// -------------------------
+const socket = new WebSocket("ws://127.0.0.1:5500");
+
+socket.onopen = () => console.log("Connected to Python");
+socket.onclose = () => console.log("Disconnected");
+
+// -------------------------
+// Video Setup
+// -------------------------
+const videoEl = document.createElement("video");
+const canvasEl = document.createElement("canvas");
+const ctx = canvasEl.getContext("2d");
+
+document.body.appendChild(canvasEl);
+
+// -------------------------
+// MediaPipe Hands
+// -------------------------
+const hands = new Hands({
+  locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
+
+hands.onResults(results => {
+  ctx.save();
+  ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+
+  // Draw the incoming frame
+  ctx.drawImage(results.image, 0, 0, canvasEl.width, canvasEl.height);
+
+  if (!results.multiHandLandmarks) {
+    socket.send("Idle");
+    ctx.restore();
+    return;
+  }
+
+  const lm = results.multiHandLandmarks[0];
+
+  // Draw hand landmarks
+  drawConnectors(ctx, lm, Hands.HAND_CONNECTIONS, { color: "#00FF00", lineWidth: 2 });
+  drawLandmarks(ctx, lm, { color: "#FF0000", lineWidth: 1 });
+
+  // -------------------------
+  // Simple Gesture Rules
+  // -------------------------
+  const index_up = lm[8].y < lm[6].y;
+  const middle_up = lm[12].y < lm[10].y;
+
+  let gesture = "Idle";
+
+  if (index_up && middle_up) gesture = "Forward";
+  else if (!index_up && !middle_up) gesture = "Rotate";
+
+  socket.send(gesture);
+  ctx.restore();
+});
+
+// -------------------------
+// Start Camera
+// -------------------------
+const camera = new Camera(videoEl, {
+  onFrame: async () => {
+    await hands.send({ image: videoEl });
+  },
+  width: 640,
+  height: 480
+});
+
+camera.start();
+
+// Resize canvas to video
+videoEl.addEventListener("loadeddata", () => {
+  canvasEl.width = videoEl.videoWidth;
+  canvasEl.height = videoEl.videoHeight;
+});
+</script>
+</body>
+</html>
